@@ -1,0 +1,43 @@
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.vcxproj.filters
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build artifacts
+Debug/
+Release/
+x64/
+x86/
+ARM/
+ARM64/
+ipch/
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.aps
+*.pch
+*.tlog
+*.lastbuildstate
+*.log
+*.cache
+*.tmp
+
+# Binaries
+*.exe
+*.dll
+*.lib
+*.exp
+
+# CMake / out-of-source builds
+CMakeFiles/
+CMakeCache.txt
+CMakeUserPresets.json
+CMakeSettings.json
+cmake-build-*/
+build/
+out/
