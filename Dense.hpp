@@ -26,78 +26,75 @@ namespace vsnn {
 			Ops::AddRowBias(Y, b_);
 		}
 
-		void Backward(const Matrix& X, const Matrix& dY, Matrix& dX) override {
-			if (gW_.Rows() != W_.Rows() || gW_.Cols() != W_.Cols()) gW_.Reset(W_.Rows(), W_.Cols());
-			if (gb_.Rows() != 1 || gb_.Cols() != W_.Cols()) gb_.Reset(1, W_.Cols());
-			if (dX.Rows() != X.Rows() || dX.Cols() != W_.Rows()) dX.Reset(X.Rows(), W_.Rows());
+        void Backward(const Matrix& X, const Matrix& dY, Matrix& dX) override {
+            const int N = X.Rows();      // batch size
+            const int IN = X.Cols();     // input dimension
+            const int OUT = dY.Cols();   // output dimension
 
-			const int N = X.Rows();
-			const int Din = W_.Rows();
-			const int Dout = W_.Cols();
-			const int Ddense = 10;
+            // gW = X^T * dY
+            if (gW_.Rows() != IN || gW_.Cols() != OUT) gW_.Reset(IN, OUT);
+            gW_.Fill(0.0f);
 
-			// Èñ¼Ò ÀÎµ¦½º Ä³½Ì
-			std::vector<std::vector<int>> nz_cols_per_row(N);
-#pragma omp parallel for schedule(static)
-			for (int i = 0; i < N; ++i) {
-				auto& nz = nz_cols_per_row[i];
-				for (int k = Ddense; k < Din; ++k)
-					if (X(i, k) != 0.0f)
-						nz.push_back(k);
-			}
+            const int TILE = 32;
+            const float* Xd = X.Data();
+            const float* dYd = dY.Data();
+            float* gWd = gW_.Data();
 
-			// gW ÃÊ±âÈ­
-			gW_.Fill(0.0f);
+            for (int k0 = 0; k0 < IN; k0 += TILE) {
+                int kMax = std::min(k0 + TILE, IN);
+                for (int j0 = 0; j0 < OUT; j0 += TILE) {
+                    int jMax = std::min(j0 + TILE, OUT);
+                    for (int i0 = 0; i0 < N; i0 += TILE) {
+                        int iMax = std::min(i0 + TILE, N);
+                        for (int k = k0; k < kMax; ++k) {
+                            for (int j = j0; j < jMax; ++j) {
+                                float acc = 0.0f;
+                                for (int i = i0; i < iMax; ++i) {
+                                    acc += Xd[i * IN + k] * dYd[i * OUT + j];
+                                }
+                                gWd[k * OUT + j] += acc;
+                            }
+                        }
+                    }
+                }
+            }
 
-			// -------------------------------
-			// gW = X^T * dY
-			// (°¢ »ùÇÃ ´ÜÀ§·Î º´·ÄÈ­)
-			// -------------------------------
-#pragma omp parallel for schedule(dynamic)
-			for (int i = 0; i < N; ++i) {
-				const auto& nz = nz_cols_per_row[i];
-				for (int j = 0; j < Dout; ++j) {
-					const float dy = dY(i, j);
+            // gb = sum_rows(dY)
+            if (gb_.Rows() != 1 || gb_.Cols() != OUT) gb_.Reset(1, OUT);
+            gb_.Fill(0.0f);
+            for (int j = 0; j < OUT; ++j) {
+                float acc = 0.0f;
+                for (int i = 0; i < N; ++i) acc += dY(i, j);
+                gb_(0, j) = acc;
+            }
 
-					// (1) ¿¬¼ÓÇü Æ¯Â¡(0~9)
-					for (int k = 0; k < Ddense; ++k) {
-#pragma omp atomic
-						gW_(k, j) += X(i, k) * dy;
-					}
+            // dX = dY * W^T
+            if (dX.Rows() != N || dX.Cols() != IN) dX.Reset(N, IN);
+            dX.Fill(0.0f);
+            const float* Wd = W_.Data();
+            float* dXd = dX.Data();
 
-					// (2) Èñ¼Ò one-hot Æ¯Â¡(10~)
-					for (int idx = 0; idx < (int)nz.size(); ++idx) {
-						int k = nz[idx];
-#pragma omp atomic
-						gW_(k, j) += X(i, k) * dy;
-					}
-				}
-			}
+            for (int i0 = 0; i0 < N; i0 += TILE) {
+                int iMax = std::min(i0 + TILE, N);
+                for (int k0 = 0; k0 < IN; k0 += TILE) {
+                    int kMax = std::min(k0 + TILE, IN);
+                    for (int j0 = 0; j0 < OUT; j0 += TILE) {
+                        int jMax = std::min(j0 + TILE, OUT);
+                        for (int i = i0; i < iMax; ++i) {
+                            float* dxRow = &dXd[i * IN];
+                            const float* dyRow = &dYd[i * OUT];
+                            for (int j = j0; j < jMax; ++j) {
+                                float dyv = dyRow[j];
+                                for (int k = k0; k < kMax; ++k) {
+                                    dxRow[k] += dyv * Wd[k * OUT + j];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-			// -------------------------------
-			// gb = sum_rows(dY)
-			// -------------------------------
-#pragma omp parallel for schedule(static)
-			for (int j = 0; j < Dout; ++j) {
-				float acc = 0.0f;
-				for (int i = 0; i < N; ++i)
-					acc += dY(i, j);
-				gb_(0, j) = acc;
-			}
-
-			// -------------------------------
-			// dX = dY * W^T
-			// -------------------------------
-#pragma omp parallel for schedule(dynamic)
-			for (int i = 0; i < N; ++i) {
-				for (int k = 0; k < Din; ++k) {
-					float acc = 0.0f;
-					for (int j = 0; j < Dout; ++j)
-						acc += dY(i, j) * W_(k, j);
-					dX(i, k) = acc;
-				}
-			}
-		}
 
 		void ZeroGrad() override { gW_.Fill(0.0f); gb_.Fill(0.0f); }
 		void Step(float) override {}
