@@ -87,7 +87,7 @@ namespace vsnn {
             float* dXd = dX.Data();
             const float* Wd = W_.Data();
 
-            // Step 1: Transpose W into Wt (OUT ¡¿ IN)
+            // Step 1: Transpose W into Wt (OUT IN)
             std::vector<float> Wt(static_cast<size_t>(OUT) * IN);
             for (int j = 0; j < OUT; ++j) {
                 const float* Wcol = &Wd[j];       // W(:, j)
